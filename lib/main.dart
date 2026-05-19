@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart'; // 🔥 Pastikan import ini ada!
+import 'screens/splash_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -19,7 +20,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       // 🔥 KUNCI UTAMANYA DI SINI: Arahkan tampilan pertama ke halaman Login
-      home: const LoginScreen(),
+      home: const SplashScreen(),
     );
   }
 }
