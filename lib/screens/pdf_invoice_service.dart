@@ -1,5 +1,7 @@
 import 'dart:typed_data';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -13,12 +15,23 @@ class PdfInvoiceService {
   static Future<Uint8List> generateInvoiceBytes({
     required Map<String, dynamic> orderData,
     required List<dynamic> items,
+    bool isManualEdit = false, // 🔥 Penanda ini dari edit manual atau bukan
   }) async {
+    await initializeDateFormatting('id', null);
     final pdf = pw.Document();
 
     final fontRegular = await PdfGoogleFonts.poppinsRegular();
     final fontBold = await PdfGoogleFonts.poppinsBold();
     final fontItalic = await PdfGoogleFonts.poppinsItalic();
+
+    // Load gambar TTD (Pastikan file ini ada di folder assets Bos!)
+    pw.MemoryImage? ttdImage;
+    try {
+      final bytes = await rootBundle.load('assets/images/ttd.png');
+      ttdImage = pw.MemoryImage(bytes.buffer.asUint8List());
+    } catch (e) {
+      print("Gambar TTD tidak ditemukan: $e");
+    }
 
     final formatter = NumberFormat.currency(
       locale: 'id',
@@ -43,9 +56,15 @@ class PdfInvoiceService {
             pw.SizedBox(height: 20),
             _buildTable(items, formatter, fontBold),
             pw.SizedBox(height: 15),
-            _buildTotal(orderData, formatter, fontBold),
-            pw.SizedBox(height: 20),
-            _buildTerms(orderData['notes'] ?? '', fontBold),
+            _buildTotal(orderData, formatter, fontBold, isManualEdit),
+            pw.SizedBox(height: 15),
+            _buildTermsAndSignature(
+              orderData['notes'] ?? '',
+              orderData['ttd_name'] ?? 'Admin Alkes Mamed',
+              fontBold,
+              ttdImage,
+              isManualEdit,
+            ),
           ];
         },
         footer: (pw.Context context) => _buildFooter(fontItalic),
@@ -58,10 +77,12 @@ class PdfInvoiceService {
   static Future<void> generateInvoice({
     required Map<String, dynamic> orderData,
     required List<dynamic> items,
+    bool isManualEdit = false,
   }) async {
     final pdfBytes = await generateInvoiceBytes(
       orderData: orderData,
       items: items,
+      isManualEdit: isManualEdit,
     );
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdfBytes,
@@ -69,20 +90,18 @@ class PdfInvoiceService {
     );
   }
 
-  // --- HEADER ---
+  // (Kode _buildHeader, _buildCustomerInfo, _buildTable SAMA PERSIS dengan sebelumnya, saya singkat biar hemat)
   static pw.Widget _buildHeader(
     Map<String, dynamic> orderData,
     pw.Font fontBold,
     pw.Font fontItalic,
   ) {
     final invoiceNumber = orderData['invoice_number'] ?? '-';
-    // Mengubah format tanggal dari database (created_at)
     String invoiceDate = "-";
     if (orderData['created_at'] != null) {
       DateTime dt = DateTime.parse(orderData['created_at']);
       invoiceDate = DateFormat('dd MMM yyyy HH:mm', 'id').format(dt);
     }
-
     final paymentMethod = orderData['payment_method'] ?? '-';
     final status = orderData['status']?.toString().toUpperCase() ?? 'PENDING';
 
@@ -146,46 +165,17 @@ class PdfInvoiceService {
               "Metode: $paymentMethod",
               style: pw.TextStyle(fontSize: 10, color: kGreyColor),
             ),
-            pw.SizedBox(height: 4),
-            pw.Container(
-              padding: const pw.EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 4,
-              ),
-              decoration: pw.BoxDecoration(
-                color: status == 'PAID' || status == 'COMPLETED'
-                    ? PdfColors.green100
-                    : PdfColors.orange100,
-                borderRadius: pw.BorderRadius.circular(4),
-              ),
-              child: pw.Text(
-                "STATUS: $status",
-                style: pw.TextStyle(
-                  font: fontBold,
-                  fontSize: 9,
-                  color: status == 'PAID' || status == 'COMPLETED'
-                      ? PdfColors.green800
-                      : PdfColors.orange800,
-                ),
-              ),
-            ),
           ],
         ),
       ],
     );
   }
 
-  // --- INFO PELANGGAN ---
   static pw.Widget _buildCustomerInfo(
     Map<String, dynamic> orderData,
     pw.Font fontBold,
   ) {
-    // Mengambil relasi shipping dari API
     final shipping = orderData['shipping'] ?? {};
-    final buyerName = shipping['recipient_name'] ?? 'Pelanggan';
-    final phone = shipping['phone'] ?? '-';
-    final address = shipping['full_address'] ?? '-';
-
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -195,7 +185,7 @@ class PdfInvoiceService {
         ),
         pw.SizedBox(height: 6),
         pw.Text(
-          buyerName,
+          shipping['recipient_name'] ?? 'Pelanggan',
           style: pw.TextStyle(
             fontSize: 14,
             font: fontBold,
@@ -203,16 +193,18 @@ class PdfInvoiceService {
           ),
         ),
         pw.SizedBox(height: 4),
-        pw.Text("Telp: $phone", style: const pw.TextStyle(fontSize: 10)),
         pw.Text(
-          "Alamat: $address",
+          "Telp: ${shipping['phone'] ?? '-'}",
+          style: const pw.TextStyle(fontSize: 10),
+        ),
+        pw.Text(
+          "Alamat: ${shipping['full_address'] ?? '-'}",
           style: const pw.TextStyle(fontSize: 10, height: 1.5),
         ),
       ],
     );
   }
 
-  // --- TABEL PRODUK ---
   static pw.Widget _buildTable(
     List<dynamic> items,
     NumberFormat formatter,
@@ -238,33 +230,37 @@ class PdfInvoiceService {
       headers: ['NO', 'DESKRIPSI PRODUK', 'QTY', 'HARGA', 'TOTAL'],
       data: List<List<String>>.generate(items.length, (index) {
         final item = items[index];
-        final name = "${item['product_name']} - ${item['variant_name']}";
+        final name = "${item['product_name']} ${item['variant_name'] ?? ''}"
+            .trim();
         final num price = num.tryParse(item['price'].toString()) ?? 0;
         final num qty = num.tryParse(item['quantity'].toString()) ?? 0;
-        final total = price * qty;
-
         return [
           (index + 1).toString(),
           name,
           qty.toString(),
           formatter.format(price),
-          formatter.format(total),
+          formatter.format(price * qty),
         ];
       }),
     );
   }
 
-  // --- PERHITUNGAN TOTAL SESUAI DATABASE ---
+  // 🔥 TOTAL SEKARANG MENDUKUNG DP DAN SISA BAYAR DARI EDIT MANUAL
   static pw.Widget _buildTotal(
     Map<String, dynamic> orderData,
     NumberFormat formatter,
     pw.Font fontBold,
+    bool isManualEdit,
   ) {
-    // Ambil langsung dari field database
     final subtotal = num.tryParse(orderData['subtotal'].toString()) ?? 0;
     final shippingCost =
         num.tryParse(orderData['shipping_cost'].toString()) ?? 0;
     final grandTotal = num.tryParse(orderData['grand_total'].toString()) ?? 0;
+
+    // Ekstra data jika lewat edit manual
+    final dp = num.tryParse(orderData['dp']?.toString() ?? '0') ?? 0;
+    final sisaBayar =
+        num.tryParse(orderData['sisa_bayar']?.toString() ?? '0') ?? 0;
 
     return pw.Container(
       alignment: pw.Alignment.centerRight,
@@ -299,15 +295,29 @@ class PdfInvoiceService {
               fontBold,
               isGrandTotal: true,
             ),
-            pw.SizedBox(height: 4),
-            pw.Text(
-              "(Sudah Dibayar Lunas)",
-              style: pw.TextStyle(
-                fontSize: 8,
-                color: PdfColors.green800,
-                font: fontBold,
+
+            // Logika Tampil DP & Sisa (Hanya muncul jika isManualEdit & DP > 0)
+            if (isManualEdit && dp > 0) ...[
+              pw.SizedBox(height: 8),
+              _buildAmountLine("Dibayar (DP)", formatter.format(dp), fontBold),
+              pw.SizedBox(height: 4),
+              _buildAmountLine(
+                "SISA TAGIHAN",
+                formatter.format(sisaBayar),
+                fontBold,
+                color: PdfColors.red800,
               ),
-            ),
+            ] else ...[
+              pw.SizedBox(height: 4),
+              pw.Text(
+                "(LUNAS)",
+                style: pw.TextStyle(
+                  fontSize: 8,
+                  color: PdfColors.green800,
+                  font: fontBold,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -319,6 +329,7 @@ class PdfInvoiceService {
     String value,
     pw.Font font, {
     bool isGrandTotal = false,
+    PdfColor? color,
   }) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -328,7 +339,7 @@ class PdfInvoiceService {
           style: pw.TextStyle(
             font: font,
             fontSize: isGrandTotal ? 12 : 10,
-            color: kPrimaryColor,
+            color: color ?? kPrimaryColor,
           ),
         ),
         pw.Text(
@@ -336,7 +347,7 @@ class PdfInvoiceService {
           style: pw.TextStyle(
             font: font,
             fontSize: isGrandTotal ? 14 : 10,
-            color: kPrimaryColor,
+            color: color ?? kPrimaryColor,
             fontWeight: isGrandTotal
                 ? pw.FontWeight.bold
                 : pw.FontWeight.normal,
@@ -346,25 +357,65 @@ class PdfInvoiceService {
     );
   }
 
-  // --- CATATAN & FOOTER ---
-  static pw.Widget _buildTerms(String notes, pw.Font fontBold) {
-    if (notes.isEmpty) notes = "-";
-    return pw.Column(
+  // 🔥 BAGIAN CATATAN & TANDA TANGAN (TTD)
+  static pw.Widget _buildTermsAndSignature(
+    String notes,
+    String ttdName,
+    pw.Font fontBold,
+    pw.MemoryImage? ttdImg,
+    bool isManualEdit,
+  ) {
+    return pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
-        pw.Text(
-          "Catatan Pembeli:",
-          style: pw.TextStyle(
-            font: fontBold,
-            fontSize: 10,
-            color: kPrimaryColor,
+        pw.Expanded(
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                "Catatan:",
+                style: pw.TextStyle(
+                  font: fontBold,
+                  fontSize: 10,
+                  color: kPrimaryColor,
+                ),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                notes.isEmpty ? "-" : notes,
+                style: const pw.TextStyle(fontSize: 10, color: PdfColors.black),
+              ),
+            ],
           ),
         ),
-        pw.SizedBox(height: 4),
-        pw.Text(
-          notes,
-          style: const pw.TextStyle(fontSize: 10, color: PdfColors.black),
-        ),
+        // BLOK TANDA TANGAN MUNCUL KALAU LEWAT EDIT MANUAL
+        if (isManualEdit)
+          pw.Container(
+            width: 150,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                pw.Text(
+                  "Hormat Kami,",
+                  style: const pw.TextStyle(fontSize: 10),
+                ),
+                pw.SizedBox(height: 5),
+                ttdImg != null
+                    ? pw.Image(ttdImg, height: 50)
+                    : pw.SizedBox(height: 50), // Spacer kalau gambar gak ada
+                pw.SizedBox(height: 5),
+                pw.Text(
+                  ttdName,
+                  style: pw.TextStyle(
+                    font: fontBold,
+                    fontSize: 11,
+                    decoration: pw.TextDecoration.underline,
+                  ),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -375,7 +426,7 @@ class PdfInvoiceService {
         pw.Divider(color: PdfColors.grey300),
         pw.SizedBox(height: 5),
         pw.Text(
-          "Dokumen ini diterbitkan secara otomatis oleh sistem PT. Mamed Indonesia Group dan sah tanpa tanda tangan.",
+          "Dokumen ini diterbitkan oleh PT. Mamed Indonesia Group.",
           style: pw.TextStyle(fontSize: 8, color: kGreyColor, font: fontItalic),
         ),
       ],

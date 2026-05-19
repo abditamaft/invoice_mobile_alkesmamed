@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'login_screen.dart';
 import 'pdf_invoice_service.dart'; // 🔥 Import fungsi PDF yang baru kita buat
+import 'edit_invoice_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String adminName;
@@ -76,14 +77,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> get _filteredOrders {
     List<dynamic> list = _orders;
 
-    // Tab 0 = Paid, Tab 1 = Bukan Paid
+    // Tab 0 = Lunas (Paid), Tab 1 = Antrean (Hanya Pending)
     if (_activeTab == 0) {
       list = list
           .where((o) => o['status']?.toString().toLowerCase() == 'paid')
           .toList();
     } else {
+      // 🔥 REVISI: Hanya tampilkan yang statusnya 'pending'
       list = list
-          .where((o) => o['status']?.toString().toLowerCase() != 'paid')
+          .where((o) => o['status']?.toString().toLowerCase() == 'pending')
           .toList();
     }
 
@@ -132,61 +134,85 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String phone = shipping['phone'] ?? "-";
     String address = shipping['full_address'] ?? "Alamat belum tersedia";
 
-    String status = item['status'] ?? "Pending";
+    String status = item['status']?.toString().toUpperCase() ?? "PENDING";
     num grandTotal = num.tryParse(item['grand_total'].toString()) ?? 0;
     num shippingCost = num.tryParse(item['shipping_cost'].toString()) ?? 0;
+
+    // 🔥 AMBIL DATA ITEM PRODUK DARI DATABASE
+    List<dynamic> items = item['items'] ?? [];
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.80,
+        height:
+            MediaQuery.of(context).size.height *
+            0.85, // Ditinggikan sedikit biar muat
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
         ),
         child: Column(
           children: [
+            // HEADER BIRU
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 30),
+              padding: const EdgeInsets.fromLTRB(25, 20, 20, 20),
               decoration: const BoxDecoration(
                 color: kPrimary,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
               ),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Detail Pesanan",
-                        style: GoogleFonts.poppins(
-                          color: Colors.white70,
-                          fontSize: 12,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Detail Pesanan",
+                          style: GoogleFonts.poppins(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                      Text(
-                        invNumber,
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                        Text(
+                          invNumber,
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        _buildStatusBadge(status, large: false),
+                      ],
+                    ),
                   ),
-                  _buildStatusBadge(status, large: true),
+                  // 🔥 TOMBOL KEMBALI DIUBAH JADI IKON SILANG (X) DI POJOK KANAN ATAS
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
                 ],
               ),
             ),
+
+            // ISI DETAIL (BISA DI-SCROLL)
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(25),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 1. INFO PENGIRIMAN
                     Text(
                       "INFORMASI PENGIRIMAN",
                       style: GoogleFonts.poppins(
@@ -196,19 +222,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         letterSpacing: 1.2,
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 15),
                     _buildDetailRow(
                       Icons.person_pin_rounded,
                       "Nama Penerima",
                       clientName,
                     ),
-                    const Divider(height: 30),
+                    const Divider(height: 25),
                     _buildDetailRow(
                       Icons.phone_android_rounded,
                       "Kontak (No HP)",
                       phone,
                     ),
-                    const Divider(height: 30),
+                    const Divider(height: 25),
                     _buildDetailRow(
                       Icons.location_on_rounded,
                       "Alamat Lengkap",
@@ -216,6 +242,89 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
 
                     const SizedBox(height: 30),
+
+                    // 🔥 2. DAFTAR PRODUK YANG DIBELI
+                    Text(
+                      "DAFTAR PRODUK (${items.length} Item)",
+                      style: GoogleFonts.poppins(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    ...items.map((prod) {
+                      String prodName = prod['product_name'] ?? '-';
+                      String variant = prod['variant_name'] ?? '';
+                      String qty = prod['quantity']?.toString() ?? '0';
+                      num price =
+                          num.tryParse(prod['price']?.toString() ?? '0') ?? 0;
+                      num subTotal = price * (num.tryParse(qty) ?? 0);
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: kPrimary.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.inventory_2_outlined,
+                                color: kPrimary,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "$prodName ${variant.isNotEmpty ? '($variant)' : ''}",
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: kPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "$qty x ${currencyFormatter.format(price)}",
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              currencyFormatter.format(subTotal),
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }), // Akhir dari mapping produk
+
+                    const SizedBox(height: 30),
+
+                    // 3. INFO PEMBAYARAN
                     Text(
                       "INFORMASI PEMBAYARAN",
                       style: GoogleFonts.poppins(
@@ -225,13 +334,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         letterSpacing: 1.2,
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 15),
                     _buildDetailRow(
                       Icons.local_shipping_rounded,
                       "Ongkos Kirim",
                       currencyFormatter.format(shippingCost),
                     ),
-                    const Divider(height: 30),
+                    const Divider(height: 25),
                     _buildDetailRow(
                       Icons.payments_rounded,
                       "Grand Total",
@@ -242,6 +351,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
             ),
+
+            // 🔥 TOMBOL EDIT MANUAL & CETAK INVOICE DI BAWAH
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -256,29 +367,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               child: Row(
                 children: [
+                  // TOMBOL EDIT MANUAL
                   Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context); // Tutup bottom sheet
+                        // Pindah ke halaman Edit Manual
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                EditInvoiceScreen(orderData: item),
+                          ),
+                        );
+                      },
+                      icon: const Icon(
+                        Icons.edit_document,
+                        color: kPrimary,
+                        size: 18,
+                      ),
+                      label: Text(
+                        "EDIT",
+                        style: GoogleFonts.poppins(
+                          color: kPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 15),
-                        side: BorderSide(color: Colors.grey.shade300),
+                        side: const BorderSide(color: kPrimary, width: 1.5),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: Text(
-                        "Kembali",
-                        style: GoogleFonts.poppins(color: Colors.grey),
-                      ),
                     ),
                   ),
                   const SizedBox(width: 15),
+
+                  // TOMBOL CETAK ASLI
                   Expanded(
                     flex: 2,
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        Navigator.pop(context); // Tutup bottom sheet
-                        _printPdfAction(item); // 🔥 LANGSUNG CETAK PDF!
+                        Navigator.pop(context);
+                        _printPdfAction(item);
                       },
                       icon: const Icon(Icons.picture_as_pdf, color: kPrimary),
                       label: Text(
@@ -418,7 +551,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(width: 15),
                   _buildStatCard(
                     "Antrean Lainnya",
-                    "${_orders.where((o) => o['status'] != 'paid').length}",
+                    // 🔥 REVISI: Angka ini sekarang hanya menghitung yang 'pending'
+                    "${_orders.where((o) => o['status']?.toString().toLowerCase() == 'pending').length}",
                     Icons.pending_actions_rounded,
                     Colors.orange,
                   ),
