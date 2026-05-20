@@ -10,6 +10,8 @@ import 'edit_invoice_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'notification_service.dart';
 import 'manual_invoice_screen.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'mobile_scanner_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String adminName;
@@ -192,6 +194,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     PdfInvoiceService.generateInvoice(orderData: orderData, items: items);
+  }
+
+  Future<void> _scanQRCode() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MobileScannerScreen(
+          onDetected: (invoice) {
+            final foundOrder = _orders.firstWhere(
+              (order) => order['invoice_number'] == invoice,
+              orElse: () => null,
+            );
+
+            if (foundOrder != null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text("Pesanan $invoice ditemukan! Membuka PDF..."),
+                  backgroundColor: Colors.green,
+                ),
+              );
+              _printPdfAction(foundOrder);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Gagal: Nomor Invoice tidak ditemukan!"),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          },
+        ),
+      ),
+    );
   }
 
   // --- BOTTOM SHEET DETAIL PESANAN ---
@@ -753,22 +788,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
+          // 🔥 KOLOM PENCARIAN & TOMBOL SCAN QR CODE
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: TextField(
-                controller: _searchController,
-                onChanged: (v) => setState(() => _searchQuery = v),
-                decoration: InputDecoration(
-                  hintText: "Cari nomor invoice atau nama...",
-                  prefixIcon: const Icon(Icons.search),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                    borderSide: BorderSide.none,
+              child: Row(
+                children: [
+                  // TextField Pencarian (Mengecil menyesuaikan ruang)
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (v) => setState(() => _searchQuery = v),
+                      decoration: InputDecoration(
+                        hintText: "Cari nomor invoice / nama...",
+                        prefixIcon: const Icon(Icons.search),
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 0,
+                        ), // Biar gak terlalu tinggi
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  // Tombol Scan QR Code
+                  Container(
+                    height: 50,
+                    width: 50,
+                    decoration: BoxDecoration(
+                      color: kPrimary,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: kPrimary.withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: IconButton(
+                      icon: const Icon(
+                        Icons.qr_code_scanner,
+                        color: Colors.white,
+                      ),
+                      onPressed: _scanQRCode, // Panggil fungsi scan
+                      tooltip: "Scan QR Invoice",
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
