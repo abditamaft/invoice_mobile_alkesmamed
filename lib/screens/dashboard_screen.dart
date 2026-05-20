@@ -9,6 +9,7 @@ import 'pdf_invoice_service.dart';
 import 'edit_invoice_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'notification_service.dart';
+import 'manual_invoice_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String adminName;
@@ -694,6 +695,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: SizedBox(
+                width: double.infinity,
+                height: 60,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ManualInvoiceScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(
+                    Icons.add_box_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                  label: const Text(
+                    "Buat Manual Invoice",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF11213D),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    elevation: 2,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 10)),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
