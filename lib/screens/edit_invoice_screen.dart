@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'pdf_invoice_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class EditInvoiceScreen extends StatefulWidget {
   final dynamic orderData;
@@ -92,7 +93,6 @@ class _EditInvoiceScreenState extends State<EditInvoiceScreen> {
 
   // --- COMPILE DATA UNTUK DILEMPAR KE PDF ---
   void _cetakPdfCustom() {
-    // Rakit ulang data sesuai inputan admin
     final totals = _calculateTotals();
 
     Map<String, dynamic> customOrderData = {
@@ -101,36 +101,83 @@ class _EditInvoiceScreenState extends State<EditInvoiceScreen> {
       'payment_method': widget.orderData['payment_method'],
       'status': widget.orderData['status'],
       'notes': _notesCtrl.text,
-      // Data Pengiriman Custom
       'shipping': {
         'recipient_name': _nameCtrl.text,
         'phone': _phoneCtrl.text,
         'full_address': _addressCtrl.text,
       },
-      // Data Harga Custom
       'subtotal': totals['subtotal'],
       'shipping_cost': totals['shipping'],
       'grand_total': totals['grandTotal'],
       'dp': totals['dp'],
       'sisa_bayar': totals['sisaBayar'],
-      'ttd_name': _ttdNameCtrl.text, // Field khusus TTD
+      'ttd_name': _ttdNameCtrl.text,
     };
 
     List<Map<String, dynamic>> customItems = _editableItems.map((item) {
       return {
         'product_name': item['nameCtrl'].text,
-        'variant_name': '', // digabung ke nama
+        'variant_name': '',
         'quantity': num.tryParse(item['qtyCtrl'].text) ?? 0,
         'price': num.tryParse(item['priceCtrl'].text) ?? 0,
       };
     }).toList();
 
-    // Panggil PDF Generator
     PdfInvoiceService.generateInvoice(
       orderData: customOrderData,
       items: customItems,
       isManualEdit: true,
     );
+  }
+
+  // --- FUNGSI KIRIM WA KHUSUS EDIT MANUAL ---
+  Future<void> _sendWaCustom() async {
+    final totals = _calculateTotals();
+
+    String phone = _phoneCtrl.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Nomor HP pembeli tidak boleh kosong!")),
+      );
+      return;
+    }
+    if (phone.startsWith('0')) phone = '62${phone.substring(1)}';
+
+    String itemListText = "";
+    for (var item in _editableItems) {
+      String prodName = item['nameCtrl'].text;
+      num qty = num.tryParse(item['qtyCtrl'].text) ?? 0;
+      num price = num.tryParse(item['priceCtrl'].text) ?? 0;
+      itemListText +=
+          "- $qty x $prodName (${currencyFormatter.format(price)})\n";
+    }
+
+    String message =
+        "Halo *${_nameCtrl.text}*,\nTerima kasih telah berbelanja di *PT. Mamed Indonesia Group*.\n\nBerikut rincian pesanan Anda:\n🧾 *No. Invoice:* ${widget.orderData['invoice_number'] ?? '-'}\n📦 *Produk:*\n$itemListText\n🚚 *Ongkir:* ${currencyFormatter.format(totals['shipping'])}\n------------------------\n💰 *GRAND TOTAL: ${currencyFormatter.format(totals['grandTotal'])}*\n\n";
+
+    if (totals['dp']! > 0) {
+      message +=
+          "💳 *Telah Dibayar (DP):* ${currencyFormatter.format(totals['dp'])}\n❗ *SISA TAGIHAN:* ${currencyFormatter.format(totals['sisaBayar'])}\n\n";
+    }
+
+    if (_notesCtrl.text.isNotEmpty) {
+      message += "📝 *Catatan:* ${_notesCtrl.text}\n\n";
+    }
+    message += "Hormat Kami,\n*${_ttdNameCtrl.text}*";
+
+    final Uri waUrl = Uri.parse(
+      "https://wa.me/$phone?text=${Uri.encodeComponent(message)}",
+    );
+
+    if (await canLaunchUrl(waUrl)) {
+      await launchUrl(waUrl, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Gagal membuka WhatsApp.")),
+        );
+      }
+    }
   }
 
   @override
@@ -247,7 +294,9 @@ class _EditInvoiceScreenState extends State<EditInvoiceScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 100), // Spacing buat tombol floating
+            const SizedBox(
+              height: 140,
+            ), // Spacing buat tombol floating yang agak besar
           ],
         ),
       ),
@@ -255,30 +304,71 @@ class _EditInvoiceScreenState extends State<EditInvoiceScreen> {
       floatingActionButton: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(15),
-        color: Colors.white,
-        child: ElevatedButton.icon(
-          onPressed: _cetakPdfCustom,
-          icon: const Icon(Icons.print, color: kPrimary),
-          label: Text(
-            "CETAK PDF CUSTOM",
-            style: GoogleFonts.poppins(
-              color: kPrimary,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 10,
+              offset: Offset(0, -5),
             ),
-          ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kAccent,
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min, // Biar gak nutupin layar
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _cetakPdfCustom,
+                icon: const Icon(Icons.print, color: kPrimary),
+                label: Text(
+                  "CETAK PDF CUSTOM",
+                  style: GoogleFonts.poppins(
+                    color: kPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kAccent,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _sendWaCustom,
+                icon: const Icon(Icons.wechat_outlined, color: Colors.white),
+                label: Text(
+                  "KIRIM WA DENGAN DP & SISA",
+                  style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade600,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
+  // --- HELPER WIDGETS ---
   Widget _buildSectionTitle(String title) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -305,9 +395,7 @@ class _EditInvoiceScreenState extends State<EditInvoiceScreen> {
         controller: controller,
         keyboardType: isNumber ? TextInputType.number : TextInputType.text,
         maxLines: maxLines,
-        onChanged: (val) => setState(
-          () {},
-        ), // Pancing render ulang agar kalkulasi total berubah real-time
+        onChanged: (val) => setState(() {}),
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(fontSize: 12),
@@ -345,4 +433,4 @@ class _EditInvoiceScreenState extends State<EditInvoiceScreen> {
       ),
     );
   }
-}
+} // 🔥 INI DIA PENUTUP CLASS YANG BENAR

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:async'; // 🔥 TAMBAHAN: Import untuk Timer
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'login_screen.dart';
-import 'pdf_invoice_service.dart'; // 🔥 Import fungsi PDF yang baru kita buat
+import 'pdf_invoice_service.dart';
 import 'edit_invoice_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'notification_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String adminName;
@@ -23,7 +26,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _orders = [];
   bool _isLoading = false;
 
-  int _activeTab = 0; // 0 = Lunas (Paid), 1 = Belum Lunas (Pending dll)
+  // 🔥 MEMORI UNTUK MENDETEKSI PERUBAHAN
+  Map<String, String> _previousOrderStatuses = {};
+  bool _isFirstLoad = true;
+
+  // 🔥 TAMBAHAN: Timer untuk polling otomatis
+  Timer? _pollingTimer;
+
+  int _activeTab = 0;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
 
@@ -37,10 +47,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _fetchOrdersFromWeb();
+
+    // 🔥 TAMBAHAN: Polling otomatis setiap 30 detik
+    _pollingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _fetchOrdersFromWeb();
+    });
   }
 
   @override
   void dispose() {
+    _pollingTimer?.cancel(); // 🔥 WAJIB: Hentikan timer saat keluar halaman
     _searchController.dispose();
     super.dispose();
   }
@@ -48,18 +64,71 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _fetchOrdersFromWeb() async {
     setState(() => _isLoading = true);
     try {
-      // 🔥 Ganti URL dengan URL API Hostinger Bos yang asli
-      // Pastikan API Laravel Bos me-return: orders beserta relasi (with(['items', 'shipping']))
       final response = await http.get(
         Uri.parse('https://alkesmamed.com/api/orders'),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        List<dynamic> fetchedOrders = data['data'] ?? [];
+
+        // 🔥 LOGIKA PENDETEKSI PERUBAHAN UNTUK NOTIFIKASI
+        if (!_isFirstLoad) {
+          for (var order in fetchedOrders) {
+            String id = order['id'].toString();
+            String currentStatus =
+                order['status']?.toString().toLowerCase() ?? 'pending';
+
+            String username =
+                (order['shipping'] != null &&
+                    order['shipping']['recipient_name'] != null)
+                ? order['shipping']['recipient_name']
+                : 'Pelanggan';
+            num grandTotal = num.tryParse(order['grand_total'].toString()) ?? 0;
+            String formattedTotal = currencyFormatter.format(grandTotal);
+
+            // Cek apakah pesanan baru atau statusnya berubah
+            if (!_previousOrderStatuses.containsKey(id) ||
+                _previousOrderStatuses[id] != currentStatus) {
+              String notifTitle = "Pesanan Update!";
+              String notifBody = "";
+
+              if (currentStatus == 'pending') {
+                notifTitle = "🛒 Pesanan Baru Masuk!";
+                notifBody =
+                    "Pelanggan $username menunggu pembayaran sebesar $formattedTotal.";
+              } else if (currentStatus == 'paid') {
+                notifTitle = "✅ Pembayaran Berhasil!";
+                notifBody =
+                    "Pelanggan $username telah membayar sebesar $formattedTotal. Segera proses!";
+              } else if (currentStatus == 'cancelled') {
+                notifTitle = "❌ Pesanan Dibatalkan";
+                notifBody =
+                    "Pelanggan $username membatalkan pesanan senilai $formattedTotal.";
+              }
+
+              if (notifBody.isNotEmpty) {
+                NotificationService.showNotification(
+                  id: int.parse(id),
+                  title: notifTitle,
+                  body: notifBody,
+                );
+              }
+            }
+          }
+        }
+
+        // Simpan state saat ini ke memori
+        Map<String, String> newMemory = {};
+        for (var order in fetchedOrders) {
+          newMemory[order['id'].toString()] =
+              order['status']?.toString().toLowerCase() ?? 'pending';
+        }
+
         setState(() {
-          _orders =
-              data['data'] ??
-              []; // Sesuaikan key 'data' atau 'orders' dari API Bos
+          _orders = fetchedOrders;
+          _previousOrderStatuses = newMemory;
+          _isFirstLoad = false;
           _isLoading = false;
         });
       } else {
@@ -67,9 +136,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (e) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Koneksi Error: Pastikan internet aktif!")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Koneksi Error: Pastikan internet aktif!"),
+          ),
+        );
+      }
     }
   }
 
@@ -77,19 +150,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> get _filteredOrders {
     List<dynamic> list = _orders;
 
-    // Tab 0 = Lunas (Paid), Tab 1 = Antrean (Hanya Pending)
     if (_activeTab == 0) {
       list = list
           .where((o) => o['status']?.toString().toLowerCase() == 'paid')
           .toList();
     } else {
-      // 🔥 REVISI: Hanya tampilkan yang statusnya 'pending'
       list = list
           .where((o) => o['status']?.toString().toLowerCase() == 'pending')
           .toList();
     }
 
-    // Fitur Pencarian
     if (_searchQuery.isNotEmpty) {
       list = list.where((order) {
         final invNumber = (order['invoice_number'] ?? "")
@@ -107,9 +177,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return list;
   }
 
-  // --- FUNGSI CETAK PDF DARI CARD/BOTTOM SHEET ---
+  // --- FUNGSI CETAK PDF ---
   void _printPdfAction(dynamic orderData) {
-    // Mencegah error jika items kosong dari API
     List<dynamic> items = orderData['items'] ?? [];
 
     if (items.isEmpty) {
@@ -121,7 +190,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    // Panggil Service PDF
     PdfInvoiceService.generateInvoice(orderData: orderData, items: items);
   }
 
@@ -138,7 +206,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     num grandTotal = num.tryParse(item['grand_total'].toString()) ?? 0;
     num shippingCost = num.tryParse(item['shipping_cost'].toString()) ?? 0;
 
-    // 🔥 AMBIL DATA ITEM PRODUK DARI DATABASE
     List<dynamic> items = item['items'] ?? [];
 
     showModalBottomSheet(
@@ -146,16 +213,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height:
-            MediaQuery.of(context).size.height *
-            0.85, // Ditinggikan sedikit biar muat
+        height: MediaQuery.of(context).size.height * 0.85,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
         ),
         child: Column(
           children: [
-            // HEADER BIRU
+            // HEADER
             Container(
               padding: const EdgeInsets.fromLTRB(25, 20, 20, 20),
               decoration: const BoxDecoration(
@@ -190,7 +255,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
                   ),
-                  // 🔥 TOMBOL KEMBALI DIUBAH JADI IKON SILANG (X) DI POJOK KANAN ATAS
                   IconButton(
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -205,14 +269,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
 
-            // ISI DETAIL (BISA DI-SCROLL)
+            // ISI DETAIL
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(25),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 1. INFO PENGIRIMAN
                     Text(
                       "INFORMASI PENGIRIMAN",
                       style: GoogleFonts.poppins(
@@ -243,7 +306,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 30),
 
-                    // 🔥 2. DAFTAR PRODUK YANG DIBELI
                     Text(
                       "DAFTAR PRODUK (${items.length} Item)",
                       style: GoogleFonts.poppins(
@@ -291,7 +353,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    "$prodName ${variant.isNotEmpty ? '($variant)' : ''}",
+                                    "$prodName${variant.isNotEmpty ? ' ($variant)' : ''}",
                                     style: GoogleFonts.poppins(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
@@ -320,11 +382,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ],
                         ),
                       );
-                    }), // Akhir dari mapping produk
+                    }),
 
                     const SizedBox(height: 30),
 
-                    // 3. INFO PEMBAYARAN
                     Text(
                       "INFORMASI PEMBAYARAN",
                       style: GoogleFonts.poppins(
@@ -352,7 +413,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
 
-            // 🔥 TOMBOL EDIT MANUAL & CETAK INVOICE DI BAWAH
+            // TOMBOL BAWAH
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -365,65 +426,101 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  // TOMBOL EDIT MANUAL
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context); // Tutup bottom sheet
-                        // Pindah ke halaman Edit Manual
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                EditInvoiceScreen(orderData: item),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    EditInvoiceScreen(orderData: item),
+                              ),
+                            );
+                          },
+                          icon: const Icon(
+                            Icons.edit_document,
+                            color: kPrimary,
+                            size: 18,
                           ),
-                        );
-                      },
-                      icon: const Icon(
-                        Icons.edit_document,
-                        color: kPrimary,
-                        size: 18,
-                      ),
-                      label: Text(
-                        "EDIT",
-                        style: GoogleFonts.poppins(
-                          color: kPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                          label: Text(
+                            "EDIT",
+                            style: GoogleFonts.poppins(
+                              color: kPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            side: const BorderSide(color: kPrimary, width: 1.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        side: const BorderSide(color: kPrimary, width: 1.5),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                      const SizedBox(width: 15),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _printPdfAction(item);
+                          },
+                          icon: const Icon(
+                            Icons.picture_as_pdf,
+                            color: kPrimary,
+                          ),
+                          label: Text(
+                            "CETAK INVOICE",
+                            style: GoogleFonts.poppins(
+                              color: kPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: kAccent,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                  const SizedBox(width: 15),
-
-                  // TOMBOL CETAK ASLI
-                  Expanded(
-                    flex: 2,
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _printPdfAction(item);
-                      },
-                      icon: const Icon(Icons.picture_as_pdf, color: kPrimary),
+                      onPressed: () => _sendInvoiceToWA(
+                        item,
+                        items,
+                        clientName,
+                        phone,
+                        grandTotal,
+                        shippingCost,
+                      ),
+                      icon: const Icon(
+                        Icons.wechat_outlined,
+                        color: Colors.white,
+                      ),
                       label: Text(
-                        "CETAK INVOICE",
+                        "KIRIM TAGIHAN KE WHATSAPP",
                         style: GoogleFonts.poppins(
-                          color: kPrimary,
+                          color: Colors.white,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: kAccent,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        backgroundColor: Colors.green.shade600,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -438,6 +535,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _sendInvoiceToWA(
+    dynamic order,
+    List<dynamic> items,
+    String name,
+    String phone,
+    num grandTotal,
+    num shippingCost,
+  ) async {
+    String waNumber = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (waNumber.startsWith('0')) waNumber = '62${waNumber.substring(1)}';
+
+    String itemListText = "";
+    for (var prod in items) {
+      String prodName = prod['product_name'] ?? '-';
+      num qty = num.tryParse(prod['quantity']?.toString() ?? '0') ?? 0;
+      num price = num.tryParse(prod['price']?.toString() ?? '0') ?? 0;
+      itemListText +=
+          "- $qty x $prodName (${currencyFormatter.format(price)})\n";
+    }
+
+    String message =
+        "Halo *$name*,\nTerima kasih telah berbelanja di *PT. Mamed Indonesia Group*.\n\nBerikut rincian pesanan Anda:\n🧾 *No. Invoice:* ${order['invoice_number'] ?? '-'}\n📦 *Produk:*\n$itemListText\n🚚 *Ongkir:* ${currencyFormatter.format(shippingCost)}\n------------------------\n💰 *GRAND TOTAL: ${currencyFormatter.format(grandTotal)}*\n\nPesanan Anda berstatus: *${order['status']?.toString().toUpperCase()}*.\nTerima kasih!";
+
+    final Uri waUrl = Uri.parse(
+      "https://wa.me/$waNumber?text=${Uri.encodeComponent(message)}",
+    );
+
+    if (await canLaunchUrl(waUrl)) {
+      await launchUrl(waUrl, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Gagal membuka WhatsApp.")),
+        );
+      }
+    }
   }
 
   Widget _buildDetailRow(
@@ -551,7 +686,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(width: 15),
                   _buildStatCard(
                     "Antrean Lainnya",
-                    // 🔥 REVISI: Angka ini sekarang hanya menghitung yang 'pending'
                     "${_orders.where((o) => o['status']?.toString().toLowerCase() == 'pending').length}",
                     Icons.pending_actions_rounded,
                     Colors.orange,

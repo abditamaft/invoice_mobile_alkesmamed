@@ -1,8 +1,17 @@
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart'; // 🔥 Pastikan import ini ada!
 import 'screens/splash_screen.dart';
+import 'screens/notification_service.dart'; // 🔥 Import fungsi notifikasi yang baru dibuat
 
-void main() {
+// 🔥 Ubah main jadi async karena butuh loading native notifikasi
+void main() async {
+  // 🔥 Wajib ditambahkan agar inisialisasi native berjalan sebelum UI dirender
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 🔥 Jalankan mesin notifikasi dan minta izin ke HP Admin
+  await NotificationService.initialize();
+  await NotificationService.requestPermission();
+
   runApp(const MyApp());
 }
 
@@ -12,14 +21,14 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Alkes Mamed Admin',
+      title: 'Invoice Alkesmamed', // Ubah title sesuai nama APK terbaru
       debugShowCheckedModeBanner:
           false, // Menghilangkan pita "DEBUG" di pojok kanan atas biar pro
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF11213D)),
         useMaterial3: true,
       ),
-      // 🔥 KUNCI UTAMANYA DI SINI: Arahkan tampilan pertama ke halaman Login
+      // 🔥 Arahkan tampilan pertama ke halaman Splash Screen yang keren
       home: const SplashScreen(),
     );
   }
