@@ -12,6 +12,7 @@ import 'notification_service.dart';
 import 'manual_invoice_screen.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'mobile_scanner_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String adminName;
@@ -31,6 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // 🔥 MEMORI UNTUK MENDETEKSI PERUBAHAN
   Map<String, String> _previousOrderStatuses = {};
+  Set<String> _printedInvoices = {}; // 🔥 Memori invoice yang sudah dicetak
   bool _isFirstLoad = true;
 
   // 🔥 TAMBAHAN: Timer untuk polling otomatis
@@ -154,10 +156,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     List<dynamic> list = _orders;
 
     if (_activeTab == 0) {
-      list = list
-          .where((o) => o['status']?.toString().toLowerCase() == 'paid')
-          .toList();
+      // 🔥 Tab Lunas: tampilkan paid, processing, shipped (belum completed)
+      list = list.where((o) {
+        final s = o['status']?.toString().toLowerCase() ?? '';
+        return s == 'paid' || s == 'processing' || s == 'shipped';
+      }).toList();
     } else {
+      // Tab Antrean: hanya pending
       list = list
           .where((o) => o['status']?.toString().toLowerCase() == 'pending')
           .toList();
@@ -194,6 +199,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     PdfInvoiceService.generateInvoice(orderData: orderData, items: items);
+    // 🔥 Tandai invoice ini sudah dicetak
+    setState(() {
+      _printedInvoices.add(orderData['invoice_number'].toString());
+    });
   }
 
   Future<void> _scanQRCode() async {
@@ -715,7 +724,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   _buildStatCard(
                     "Pesanan Lunas",
-                    "${_orders.where((o) => o['status'] == 'paid').length}",
+                    "${_orders.where((o) {
+                      final s = o['status']?.toString().toLowerCase() ?? '';
+                      return s == 'paid' || s == 'processing' || s == 'shipped';
+                    }).length}",
                     Icons.check_circle_rounded,
                     Colors.green,
                   ),
@@ -939,11 +951,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String status = item['status']?.toString().toUpperCase() ?? "PENDING";
     num total = num.tryParse(item['grand_total'].toString()) ?? 0;
 
+    // 🔥 Cek apakah invoice ini sudah dicetak
+    bool sudahCetak = _printedInvoices.contains(inv);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        // 🔥 Warna card: abu-abu mati jika sudah cetak, putih jika belum
+        color: sudahCetak ? const Color(0xFFE8E8E8) : Colors.white,
         borderRadius: BorderRadius.circular(20),
+        border: sudahCetak
+            ? Border.all(color: Colors.grey.shade400, width: 1)
+            : null,
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(
@@ -951,19 +970,79 @@ class _DashboardScreenState extends State<DashboardScreen> {
           vertical: 10,
         ),
         leading: CircleAvatar(
-          backgroundColor: kPrimary.withOpacity(0.05),
-          child: const Icon(Icons.receipt_long, color: kPrimary),
+          // 🔥 Icon berubah jika sudah cetak
+          backgroundColor: sudahCetak
+              ? Colors.grey.shade300
+              : kPrimary.withOpacity(0.05),
+          child: Icon(
+            sudahCetak ? Icons.check_circle : Icons.receipt_long,
+            color: sudahCetak ? Colors.grey.shade600 : kPrimary,
+          ),
         ),
-        title: Text(
-          inv,
-          style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                inv,
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: sudahCetak ? Colors.grey.shade600 : kPrimary,
+                ),
+              ),
+            ),
+            // 🔥 Badge "Sudah Cetak" / "Belum Cetak"
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: sudahCetak
+                    ? Colors.grey.shade200
+                    : Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: sudahCetak
+                      ? Colors.grey.shade400
+                      : Colors.orange.shade300,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    sudahCetak
+                        ? Icons.print_rounded
+                        : Icons.print_disabled_rounded,
+                    size: 10,
+                    color: sudahCetak
+                        ? Colors.grey.shade600
+                        : Colors.orange.shade700,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    sudahCetak ? "Sudah Cetak" : "Belum Cetak",
+                    style: GoogleFonts.poppins(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: sudahCetak
+                          ? Colors.grey.shade600
+                          : Colors.orange.shade700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const SizedBox(height: 4),
             Text(
               name,
-              style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                color: sudahCetak ? Colors.grey.shade500 : Colors.grey,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -971,7 +1050,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: GoogleFonts.poppins(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Colors.green,
+                color: sudahCetak ? Colors.grey.shade500 : Colors.green,
               ),
             ),
           ],
@@ -1019,11 +1098,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: const Text("Batal"),
           ),
           TextButton(
-            onPressed: () => Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (context) => const LoginScreen()),
-              (r) => false,
-            ),
+            onPressed: () async {
+              // 🔥 Hapus sesi login dari SharedPreferences
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.remove('admin_name');
+              await prefs.remove('login_timestamp');
+
+              if (!context.mounted) return;
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+                (r) => false,
+              );
+            },
             child: const Text(
               "Ya, Keluar",
               style: TextStyle(color: Colors.red),

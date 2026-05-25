@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dashboard_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -90,6 +91,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
         String adminName = responseData['user']['name'];
 
+        // 🔥 Simpan sesi login ke SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('admin_name', adminName);
+        await prefs.setInt(
+          'login_timestamp',
+          DateTime.now().millisecondsSinceEpoch,
+        );
+
+        if (!mounted) return;
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(

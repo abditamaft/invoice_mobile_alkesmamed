@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'login_screen.dart'; // Ganti ke LoginScreen setelah loading selesai
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dashboard_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -21,12 +23,39 @@ class _SplashScreenState extends State<SplashScreen> {
     super.initState();
     // 🔥 DURASI SPLASH SCREEN (misal 3.5 detik)
     Timer(const Duration(milliseconds: 3500), () {
-      // Pindah ke halaman Login dan hapus tumpukan Splash
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+      _checkLoginStatus();
     });
+  }
+
+  Future<void> _checkLoginStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? adminName = prefs.getString('admin_name');
+    final int? loginTimestamp = prefs.getInt('login_timestamp');
+
+    if (adminName != null && loginTimestamp != null) {
+      final loginTime = DateTime.fromMillisecondsSinceEpoch(loginTimestamp);
+      final now = DateTime.now();
+      final diff = now.difference(loginTime).inDays;
+
+      // 🔥 Jika belum 7 hari, langsung masuk Dashboard
+      if (diff < 7) {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DashboardScreen(adminName: adminName),
+          ),
+        );
+        return;
+      }
+    }
+
+    // Jika tidak ada sesi atau sudah expired → ke Login
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
   }
 
   @override
