@@ -32,7 +32,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // 🔥 MEMORI UNTUK MENDETEKSI PERUBAHAN
   Map<String, String> _previousOrderStatuses = {};
-  Set<String> _printedInvoices = {}; // 🔥 Memori invoice yang sudah dicetak
+  Set<String> _printedInvoices = {};
+  SharedPreferences? _prefs;
   bool _isFirstLoad = true;
 
   // 🔥 TAMBAHAN: Timer untuk polling otomatis
@@ -51,9 +52,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _loadPrintedInvoices(); // 🔥 Load dulu dari storage
     _fetchOrdersFromWeb();
 
-    // 🔥 TAMBAHAN: Polling otomatis setiap 30 detik
     _pollingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _fetchOrdersFromWeb();
     });
@@ -64,6 +65,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _pollingTimer?.cancel(); // 🔥 WAJIB: Hentikan timer saat keluar halaman
     _searchController.dispose();
     super.dispose();
+  }
+
+  // 🔥 Load daftar invoice yang sudah dicetak dari storage
+  Future<void> _loadPrintedInvoices() async {
+    _prefs = await SharedPreferences.getInstance();
+    final List<String> saved = _prefs?.getStringList('printed_invoices') ?? [];
+    setState(() {
+      _printedInvoices = saved.toSet();
+    });
+  }
+
+  // 🔥 Simpan daftar invoice yang sudah dicetak ke storage
+  Future<void> _savePrintedInvoices() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setStringList('printed_invoices', _printedInvoices.toList());
   }
 
   Future<void> _fetchOrdersFromWeb() async {
@@ -186,7 +202,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // --- FUNGSI CETAK PDF ---
-  void _printPdfAction(dynamic orderData) {
+  Future<void> _printPdfAction(dynamic orderData) async {
     List<dynamic> items = orderData['items'] ?? [];
 
     if (items.isEmpty) {
@@ -199,10 +215,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     PdfInvoiceService.generateInvoice(orderData: orderData, items: items);
-    // 🔥 Tandai invoice ini sudah dicetak
+    // 🔥 Tandai invoice sudah dicetak dan simpan permanen
     setState(() {
       _printedInvoices.add(orderData['invoice_number'].toString());
     });
+    await _savePrintedInvoices(); // 🔥 Simpan ke SharedPreferences
   }
 
   Future<void> _scanQRCode() async {
